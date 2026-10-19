@@ -1,4 +1,4 @@
-"""Commodity-code assistant: a small ADK agent for learning Vertex AI agents.
+"""Commodity-code assistant: an ADK agent on Vertex AI that proposes tariff codes.
 
 Layers:
   1. Intake behaviour  - the root agent's instruction makes it ask clarifying
@@ -42,7 +42,7 @@ def _get_json(path: str) -> dict:
         TARIFF_API + path,
         headers={
             "Accept": "application/json",
-            "User-Agent": "commodity-agent-learning/0.1",
+            "User-Agent": "commodity-agent/0.1",
         },
     )
     with urllib.request.urlopen(req, timeout=15) as resp:

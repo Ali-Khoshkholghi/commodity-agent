@@ -1,68 +1,129 @@
-# Commodity-code assistant (learning project: Vertex AI + ADK)
+# Commodity Code Assistant
 
-A small conversational agent built with Google's Agent Development Kit (ADK)
-and Gemini on Vertex AI. A seller describes a product; the agent asks 2-3
-clarifying questions, proposes a commodity (tariff) code, checks it against the
-official UK Trade Tariff, and returns the code, a confidence level, the
-standard duty and a source link.
+A conversational agent that helps small importers find the likely commodity
+(tariff) code for a product. It asks the questions that decide classification,
+checks the proposed code against the official UK Trade Tariff, and returns the
+code, a confidence level, the standard duty rate and a link to the source.
 
-It is a learning project. Output is a suggestion, not an official
-classification. For anything binding, use HMRC's tariff tools or request an
-advance ruling.
+Built with Google's [Agent Development Kit (ADK)](https://google.github.io/adk-docs/)
+and Gemini on Vertex AI.
 
-## Run it
+> **Disclaimer.** Output is a suggestion, not an official classification. For a
+> binding decision, use HMRC's tariff tools or request an advance ruling.
 
-    python3 -m venv .venv && source .venv/bin/activate
-    pip install -r requirements.txt
-    gcloud auth application-default login      # once
-    adk web .                                  # then pick "commodity_agent"
+## Features
 
-Config lives in `commodity_agent/.env` (project, `global` location, Vertex on).
-Model: `gemini-3.6-flash`. No sampling parameters are set on purpose.
+- **Guided intake.** Asks 2-3 short questions first (material, function,
+  destination, country of origin) instead of guessing from a one-line description.
+- **Verified codes.** Confirms that the exact 10-digit code exists and is
+  declarable in the UK Trade Tariff, and suggests nearby codes when it does not.
+- **Sourced duty rates.** Reports the standard (third-country) duty with a link
+  to the official page. Rates it cannot verify are labelled as unverified.
+- **Calibrated confidence.** Confidence is capped in code, not only in the
+  prompt: never "high" for an unverified code, or when a different tariff
+  heading is also plausible.
+- **Scoped behaviour.** Declines out-of-scope requests such as supplier
+  sourcing or shipping advice.
 
-Quick live test of the UK lookup tool on its own:
+## Example
 
-    python commodity_agent/agent.py 9503003990
+Illustrative output for a UK import (a plastic protective phone case with a
+built-in battery, from China):
 
-## How it works (all in `commodity_agent/agent.py`)
+```
+Code: 3926909790 (Confidence: medium)
+Why: Classified under plastic articles as the main function is a protective
+phone case. As a composite product, protection gives it its essential
+character over the secondary battery feature.
+Duty: 6.00 %. Check the source page for any preferential rate for imports
+from China.
+Source: https://www.trade-tariff.service.gov.uk/commodities/3926909790
+Could change if: heading 8507 applies if the item is judged to be primarily
+an electric accumulator rather than a case.
+```
 
-1. **Intake behaviour**: instructions force clarifying questions first
-   (material, function, destination, origin) and keep the agent in scope.
-2. **`lookup_uk_tariff`** (function tool): calls the free UK Trade Tariff API
-   to confirm the exact 10-digit code exists and is declarable, and reads the
-   standard duty. If not found, it returns nearby declarable codes.
-3. **`duty_search`** (sub-agent with Google Search, wrapped as a tool): used
-   for EU/TARIC; weak at verifying official pages, so it often says unverified.
-4. **`validate_and_save_code`** (function tool + session state): checks the
-   code's shape and saves it to state. Confidence is capped **in code**:
-   never "high" if the code was not verified on an official site, or if a
-   different heading is also plausible.
+## How it works
 
-## What this project taught
+| Component | Type | Role |
+|---|---|---|
+| `commodity_code_assistant` | Root agent (Gemini) | Runs the intake, picks a candidate code, composes the answer |
+| `lookup_uk_tariff` | Function tool | Calls the public UK Trade Tariff API: existence, declarability, standard duty, nearby codes |
+| `duty_search` | Sub-agent with Google Search, exposed as a tool | Checks EU (TARIC) codes; often returns "unverified" |
+| `validate_and_save_code` | Function tool with session state | Validates code format, applies the confidence caps, stores proposals in session state |
 
-- Prompts steer; code enforces. Rules the model must not break (the confidence
-  cap) belong in a tool, not only in the instructions.
-- "The code exists" and "the code is right" are different questions. A lookup
-  answers the first; the second is judgement and should say "medium".
-- Google Search grounding could not verify tariff pages. A direct API call did.
-- Models invent plausible detail (alternative 10-digit codes, "hand-made vs
-  mass-produced" subcodes). Constrain what they may state and make them cite.
-- Check which file you are actually running. The agent graph name in
-  `adk web` showed we were still on the blank template.
+Request flow: intake questions, candidate code, official lookup (at most two),
+validation and confidence cap, formatted answer.
 
-## Known limits
+## Requirements
 
-- UK only is verified. EU relies on search and usually comes back unverified.
-- Preferential rates by origin are not computed (the API has the data; a later
-  upgrade could read it).
-- Descriptions of subcodes are shortened; very long lists are capped at 30.
+- Python 3.10+
+- A Google Cloud project with the Vertex AI API enabled
+- [Google Cloud CLI](https://cloud.google.com/sdk/docs/install) with
+  Application Default Credentials
 
-## Cost and cleanup
+## Setup
 
-- Everything runs locally; only model calls (and any search grounding) are
-  billed to the Google Cloud project. Nothing is deployed, so nothing bills
-  while idle. The UK tariff API is free.
-- Do not click "Upgrade" on the free trial; when credit or the 90 days run
-  out, resources stop instead of billing.
-- Remove local credentials when done:  gcloud auth application-default revoke
-- Optional: delete the Google Cloud project to remove everything.
+```bash
+git clone https://github.com/Ali-Khoshkholghi/commodity-agent.git
+cd commodity-agent
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+
+gcloud auth application-default login
+gcloud services enable aiplatform.googleapis.com
+
+cp commodity_agent/.env.example commodity_agent/.env
+# edit commodity_agent/.env and set GOOGLE_CLOUD_PROJECT
+```
+
+## Run
+
+```bash
+adk web .          # browser UI; select "commodity_agent"
+adk run commodity_agent   # terminal chat
+```
+
+Check the UK lookup on its own:
+
+```bash
+python commodity_agent/agent.py 9503003990
+```
+
+## Configuration
+
+Set in `commodity_agent/.env` (see `.env.example`):
+
+| Variable | Description |
+|---|---|
+| `GOOGLE_GENAI_USE_ENTERPRISE` | `1` to use Vertex AI |
+| `GOOGLE_CLOUD_PROJECT` | Your Google Cloud project ID |
+| `GOOGLE_CLOUD_LOCATION` | Region, `global` by default |
+
+The model is set in `commodity_agent/agent.py` (`MODEL`). Model availability and
+retirement dates change; check the Vertex AI model versions page before
+deploying.
+
+## Project structure
+
+```
+commodity_agent/
+  agent.py          agents and tools
+  __init__.py
+  .env.example      configuration template
+requirements.txt
+```
+
+## Limitations
+
+- Duty verification is UK only. EU checks rely on web search and usually
+  return "unverified".
+- Preferential rates by country of origin are not calculated; the answer points
+  to the source page.
+- Classification of composite products is a judgement call; the agent flags
+  these as medium confidence at most.
+
+## Cost
+
+Everything runs locally. Only Gemini calls (and any Google Search grounding)
+are billed to your Google Cloud project; the UK Trade Tariff API is free.
+Nothing is deployed, so nothing bills while idle.
